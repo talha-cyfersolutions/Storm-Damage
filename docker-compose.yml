@@ -1,0 +1,30 @@
+services:
+  storm-damage-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: storm-damage-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=development
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - COG_STORAGE_BACKEND=local
+      - COG_STORAGE_DIR=/app/cog-storage
+      - RATE_LIMIT_ENABLED=false
+    volumes:
+      - cog_data:/app/cog-storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  cog_data:
+

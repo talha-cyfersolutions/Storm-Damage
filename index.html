@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storm Damage Imagery Viewer</title>
+
+  <!-- Mapbox GL JS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
+
+  <!-- GeoTIFF.js for client-side COG decoding -->
+  <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, html { width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; background: #0f172a; color: #f8fafc; }
+    #map { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+
+    /* Floating Control Panel */
+    .panel {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      width: 360px;
+      max-height: calc(100vh - 32px);
+      background: rgba(15, 23, 42, 0.92);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 18px;
+      z-index: 10;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 12px;
+    }
+    .title-row h1 { font-size: 16px; font-weight: 700; color: #38bdf8; letter-spacing: -0.01em; }
+    .badge {
+      background: #0284c7;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    label { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+    input, select {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus { border-color: #38bdf8; }
+
+    button.btn-primary {
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s;
+    }
+    button.btn-primary:hover { background: #0369a1; }
+    button.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Results / Analytics Panel */
+    .stats-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .stat-header { display: flex; justify-content: space-between; align-items: baseline; }
+    .stat-header h3 { font-size: 12px; color: #94a3b8; text-transform: uppercase; }
+    .stat-header .stat-pct { font-size: 16px; font-weight: 700; color: #ef4444; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; }
+    .stat-item { background: #0f172a; padding: 6px 8px; border-radius: 4px; }
+    .stat-item .val { font-weight: 600; color: #f8fafc; }
+    .stat-item .lbl { color: #64748b; font-size: 10px; }
+
+    /* Legend */
+    .legend {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      padding: 12px 16px;
+      z-index: 10;
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    }
+    .legend-title { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .legend-box { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); }
+
+    /* Spinner */
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Opacity Slider */
+    .slider-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #94a3b8; }
+    .slider-row input[type=range] { width: 60%; }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <!-- Left Control Panel -->
+  <div class="panel">
+    <div class="title-row">
+      <h1>Storm Damage Viewer</h1>
+      <span class="badge" id="platform-badge">Sentinel-1</span>
+    </div>
+
+    <!-- Mapbox Access Token Setup -->
+    <div class="form-group">
+      <label for="mapbox-token">Mapbox Token (Optional)</label>
+      <input type="text" id="mapbox-token" placeholder="Mapbox Access Token (uses open basemap if empty)">
+    </div>
+
+    <div class="form-group">
+      <label for="api-url">API Base URL</label>
+      <input type="text" id="api-url" value="http://localhost:8000">
+    </div>
+
+    <div class="form-group">
+      <label for="incident-name">Incident Name</label>
+      <input type="text" id="incident-name" value="Beaumont EF1 Tornado">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="lat">Latitude</label>
+        <input type="number" id="lat" step="0.0001" value="31.1770">
+      </div>
+      <div class="form-group">
+        <label for="lon">Longitude</label>
+        <input type="number" id="lon" step="0.0001" value="-88.9422">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="start-date">Start Date</label>
+        <input type="date" id="start-date" value="2024-05-06">
+      </div>
+      <div class="form-group">
+        <label for="end-date">End Date</label>
+        <input type="date" id="end-date" value="2024-05-07">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="buffer">Buffer (km)</label>
+        <input type="number" id="buffer" min="1" max="50" value="6.0">
+      </div>
+      <div class="form-group">
+        <label for="sensor">Preferred Sensor</label>
+        <select id="sensor">
+          <option value="auto" selected>Auto (Optical/SAR)</option>
+          <option value="sar">Sentinel-1 SAR</option>
+          <option value="optical">Sentinel-2 Optical</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn-primary" id="btn-process" onclick="processStormDamage()">
+      <span id="btn-spinner" class="spinner" style="display: none;"></span>
+      <span id="btn-label">Process Storm Damage</span>
+    </button>
+
+    <!-- Layer controls -->
+    <div class="form-group">
+      <label for="view-mode">Overlay Visualization</label>
+      <select id="view-mode" onchange="switchViewMode(this.value)">
+        <option value="classification" selected>Damage Classification (Categorical)</option>
+        <option value="rgb">False-Color SAR Composite (RGB Change)</option>
+      </select>
+    </div>
+
+    <div class="slider-row">
+      <span>Raster Opacity:</span>
+      <input type="range" id="opacity-slider" min="0" max="1" step="0.05" value="0.85" oninput="updateOpacity(this.value)">
+    </div>
+
+    <!-- Analytics Card -->
+    <div class="stats-card" id="stats-card" style="display: none;">
+      <div class="stat-header">
+        <h3>Damage Summary</h3>
+        <span class="stat-pct" id="stat-damaged-pct">0.0%</span>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-item"><div class="val" id="stat-analyzed">0 km²</div><div class="lbl">Analyzed Area</div></div>
+        <div class="stat-item"><div class="val" id="stat-damaged">0 km²</div><div class="lbl">Total Damaged</div></div>
+        <div class="stat-item"><div class="val" id="stat-severe" style="color: #ef4444;">0 km²</div><div class="lbl">Severe Collapse</div></div>
+        <div class="stat-item"><div class="val" id="stat-moderate" style="color: #f97316;">0 km²</div><div class="lbl">Moderate Damage</div></div>
+        <div class="stat-item"><div class="val" id="stat-minor" style="color: #eab308;">0 km²</div><div class="lbl">Minor / Flooded</div></div>
+        <div class="stat-item"><div class="val" id="stat-dates">-</div><div class="lbl">Pre / Post Dates</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend" id="legend">
+    <div class="legend-title">Classification Symbology</div>
+    <div class="legend-item"><div class="legend-box" style="background: #10b981;"></div> Undamaged Terrain</div>
+    <div class="legend-item"><div class="legend-box" style="background: #eab308;"></div> Minor Inundation / Change</div>
+    <div class="legend-item"><div class="legend-box" style="background: #f97316;"></div> Moderate Damage / Debris</div>
+    <div class="legend-item"><div class="legend-box" style="background: #dc2626;"></div> Severe Collapse / Standing Flood</div>
+  </div>
+
+  <script>
+    // Initialize Mapbox with fallback to open raster basemap if no token is provided
+    let map;
+    const defaultCenter = [-88.9422, 31.1770];
+    const defaultZoom = 12;
+
+    function initMap() {
+      const userToken = document.getElementById("mapbox-token").value.trim();
+      mapboxgl.accessToken = userToken || "";
+
+      if (userToken) {
+        map = new mapboxgl.Map({
+          container: "map",
+          style: "mapbox://styles/mapbox/dark-v11",
+          center: defaultCenter,
+          zoom: defaultZoom,
+        });
+      } else {
+        // Fallback: Free Carto Dark Matter raster basemap without requiring a Mapbox key
+        map = new mapboxgl.Map({
+          container: "map",
+          style: {
+            version: 8,
+            sources: {
+              "osm-tiles": {
+                type: "raster",
+                tiles: [
+                  "https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png"
+                ],
+                tileSize: 256,
+                attribution: "© OpenStreetMap contributors, © CARTO"
+              }
+            },
+            layers: [{
+              id: "osm-layer",
+              type: "raster",
+              source: "osm-tiles",
+              minzoom: 0,
+              maxzoom: 19
+            }]
+          },
+          center: defaultCenter,
+          zoom: defaultZoom,
+        });
+      }
+
+      map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    }
+
+    initMap();
+
+    // Auto-detect API Base URL from current host when loaded via browser
+    window.addEventListener("DOMContentLoaded", () => {
+      const isHttp = window.location.protocol.startsWith("http");
+      const detectedApi = isHttp ? window.location.origin : "http://localhost:8000";
+      const apiInput = document.getElementById("api-url");
+      if (apiInput) {
+        apiInput.value = detectedApi;
+      }
+    });
+
+    // Re-initialize if Mapbox token changes
+    document.getElementById("mapbox-token").addEventListener("change", () => {
+      if (map) map.remove();
+      initMap();
+    });
+
+    function updateOpacity(val) {
+      if (map && map.getLayer("cog-raster-layer")) {
+        map.setPaintProperty("cog-raster-layer", "raster-opacity", parseFloat(val));
+      }
+    }
+
+    async function processStormDamage() {
+      const btn = document.getElementById("btn-process");
+      const spinner = document.getElementById("btn-spinner");
+      const btnLabel = document.getElementById("btn-label");
+
+      const apiUrl = document.getElementById("api-url").value.replace(/\/+$/, "");
+      const payload = {
+        latitude: parseFloat(document.getElementById("lat").value),
+        longitude: parseFloat(document.getElementById("lon").value),
+        storm_start_date: document.getElementById("start-date").value,
+        storm_end_date: document.getElementById("end-date").value,
+        buffer_km: parseFloat(document.getElementById("buffer").value),
+        prefer_sensor: document.getElementById("sensor").value,
+        incident_name: document.getElementById("incident-name").value || undefined,
+      };
+
+      try {
+        btn.disabled = true;
+        spinner.style.display = "inline-block";
+        btnLabel.innerText = "Analyzing Satellite Feeds...";
+
+        const resp = await fetch(`${apiUrl}/api/v1/process-damage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `HTTP ${resp.status}: Pipeline error`);
+        }
+
+        const data = await resp.json();
+        renderResults(data, apiUrl);
+      } catch (err) {
+        console.error("Storm processing error:", err);
+        let msg = err.message;
+        if (err.name === "TypeError" || (err.message && (err.message.includes("fetch") || err.message.includes("NetworkError")))) {
+          msg = `Network Error: Cannot reach the API at ${apiUrl}.\n\n` +
+                `• Verify your backend is running: http://localhost:8000/health\n` +
+                `• If index.html was opened from your desktop (file://), open http://localhost:8000/viewer in your browser instead.\n` +
+                `• If running Docker, make sure port 8000 is forwarded.`;
+        }
+        alert(msg);
+      } finally {
+        btn.disabled = false;
+        spinner.style.display = "none";
+        btnLabel.innerText = "Process Storm Damage";
+      }
+    }
+
+    async function renderResults(data, apiUrl) {
+      // 1. Update Stats Card
+      document.getElementById("stats-card").style.display = "flex";
+      document.getElementById("platform-badge").innerText = data.platform || "SAR";
+      document.getElementById("stat-damaged-pct").innerText = data.statistics.damaged_percent + "%";
+      document.getElementById("stat-analyzed").innerText = data.statistics.total_analyzed_km2 + " km²";
+      document.getElementById("stat-damaged").innerText = data.statistics.total_damaged_km2 + " km²";
+      document.getElementById("stat-severe").innerText = data.statistics.severe_collapse_km2 + " km²";
+      document.getElementById("stat-moderate").innerText = data.statistics.moderate_damage_km2 + " km²";
+      document.getElementById("stat-minor").innerText = data.statistics.minor_flooded_km2 + " km²";
+      document.getElementById("stat-dates").innerText = `${data.pre_storm_date} / ${data.post_storm_date}`;
+
+      // 2. Render GeoJSON Boundary
+      if (map.getSource("storm-bbox")) {
+        map.getSource("storm-bbox").setData(data.geojson);
+      } else {
+        map.addSource("storm-bbox", { type: "geojson", data: data.geojson });
+        map.addLayer({
+          id: "storm-bbox-fill",
+          type: "fill",
+          source: "storm-bbox",
+          paint: {
+            "fill-color": "#38bdf8",
+            "fill-opacity": 0.08,
+          },
+        });
+        map.addLayer({
+          id: "storm-bbox-line",
+          type: "line",
+          source: "storm-bbox",
+          paint: {
+            "line-color": "#38bdf8",
+            "line-width": 2,
+            "line-dasharray": [2, 2],
+          },
+        });
+      }
+
+      // Fly to bounds
+      const [minX, minY, maxX, maxY] = data.bbox;
+      map.fitBounds([[minX, minY], [maxX, maxY]], { padding: 80, duration: 1500 });
+
+      // 3. Fetch and Render the 4-band Cloud-Optimized GeoTIFF via geotiff.js
+      const cogFullUrl = data.cog_url.startsWith("http") ? data.cog_url : `${apiUrl}${data.cog_url}`;
+      await renderCogOverlay(cogFullUrl, [minX, minY, maxX, maxY]);
+    }
+
+    let loadedRasters = null;
+    let loadedBbox = null;
+    let loadedDimensions = null;
+
+    function switchViewMode(mode) {
+      if (!loadedRasters || !loadedBbox) return;
+      renderCanvasOverlay(mode);
+    }
+
+    async function renderCogOverlay(cogUrl, bbox) {
+      try {
+        const tiff = await GeoTIFF.fromUrl(cogUrl);
+        const image = await tiff.getImage();
+        loadedDimensions = { width: image.getWidth(), height: image.getHeight() };
+        loadedRasters = await image.readRasters();
+        loadedBbox = bbox;
+
+        const currentMode = document.getElementById("view-mode").value;
+        renderCanvasOverlay(currentMode);
+      } catch (err) {
+        console.error("Failed to render COG overlay via GeoTIFF.js:", err);
+      }
+    }
+
+    function renderCanvasOverlay(mode) {
+      if (!loadedRasters || !loadedBbox || !loadedDimensions) return;
+      const { width, height } = loadedDimensions;
+      const rasters = loadedRasters;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      const imgData = ctx.createImageData(width, height);
+      const data = imgData.data;
+
+      if (mode === "rgb") {
+        const rBand = rasters[0];
+        const gBand = rasters[1];
+        const bBand = rasters[2];
+        const classBand = rasters[3];
+
+        for (let i = 0; i < width * height; i++) {
+          const idx = i * 4;
+          if (classBand[i] === 0) {
+            data[idx + 3] = 0;
+          } else {
+            data[idx] = rBand[i];
+            data[idx + 1] = gBand[i];
+            data[idx + 2] = bBand[i];
+            data[idx + 3] = 230;
+          }
+        }
+      } else {
+        // Classification mode
+        const classBand = rasters[3];
+        const classColors = {
+          0: [0, 0, 0, 0],
+          1: [16, 185, 129, 90],     // Undamaged Green
+          2: [234, 179, 8, 210],     // Minor Yellow
+          3: [249, 115, 22, 225],    // Moderate Orange
+          4: [220, 38, 38, 240],     // Severe Red
+        };
+
+        for (let i = 0; i < width * height; i++) {
+          const c = classBand[i];
+          const color = classColors[c] || [0, 0, 0, 0];
+          const idx = i * 4;
+          data[idx] = color[0];
+          data[idx + 1] = color[1];
+          data[idx + 2] = color[2];
+          data[idx + 3] = color[3];
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      const dataUrl = canvas.toDataURL();
+
+      const [minX, minY, maxX, maxY] = loadedBbox;
+      const coordinates = [
+        [minX, maxY], // top-left
+        [maxX, maxY], // top-right
+        [maxX, minY], // bottom-right
+        [minX, minY], // bottom-left
+      ];
+
+      if (map.getLayer("cog-raster-layer")) map.removeLayer("cog-raster-layer");
+      if (map.getSource("cog-raster-source")) map.removeSource("cog-raster-source");
+
+      map.addSource("cog-raster-source", {
+        type: "image",
+        url: dataUrl,
+        coordinates: coordinates,
+      });
+
+      const currentOpacity = parseFloat(document.getElementById("opacity-slider").value);
+      const beforeLayer = map.getLayer("storm-bbox-line") ? "storm-bbox-line" : undefined;
+      map.addLayer({
+        id: "cog-raster-layer",
+        type: "raster",
+        source: "cog-raster-source",
+        paint: {
+          "raster-opacity": currentOpacity,
+          "raster-fade-duration": 0,
+        },
+      }, beforeLayer);
+    }
+  </script>
+</body>
+</html>
+
