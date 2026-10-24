@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
 from math import cos, radians
 from typing import Any
@@ -114,37 +115,57 @@ class StormDamageService:
 
         return href
 
-    @staticmethod
+    @classmethod
     def _read_windowed_band(
-        href: str, bbox: list[float], dimension: int = 512
+        cls, href: str, bbox: list[float], dimension: int = 512
     ) -> tuple[np.ndarray, np.ndarray]:
         """Reads a remote COG asset window without downloading the full multi-GB scene."""
         env_vars = {
             "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
             "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff",
-            "GDAL_HTTP_TIMEOUT": str(Config.GDAL_HTTP_TIMEOUT),
+            "GDAL_HTTP_TIMEOUT": "60",
+            "GDAL_HTTP_MAX_RETRY": "5",
+            "GDAL_HTTP_RETRY_DELAY": "3",
+            "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES": "YES",
+            "GDAL_HTTP_MULTIPLEX": "YES",
+            "VSI_CACHE": "TRUE",
+            "VSI_CACHE_SIZE": "50000000",
             "AWS_NO_SIGN_REQUEST": "YES",
             "AWS_REGION": "eu-central-1",
         }
-        with rasterio.Env(**env_vars), rasterio.open(href) as src:
-            vrt_kwargs: dict[str, Any] = {
-                "crs": "EPSG:4326",
-                "transform": from_bounds(*bbox, dimension, dimension),
-                "width": dimension,
-                "height": dimension,
-                "resampling": Resampling.bilinear,
-            }
-            # If raster has Ground Control Points (e.g. Sentinel-1 GRD on AWS), supply GCP transform
-            if src.crs is None and src.gcps and src.gcps[0]:
-                gcps, gcp_crs = src.gcps
-                vrt_kwargs["src_crs"] = gcp_crs or "EPSG:4326"
-                vrt_kwargs["src_transform"] = rasterio.transform.from_gcps(gcps)
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                with rasterio.Env(**env_vars), rasterio.open(href) as src:
+                    vrt_kwargs: dict[str, Any] = {
+                        "crs": "EPSG:4326",
+                        "transform": from_bounds(*bbox, dimension, dimension),
+                        "width": dimension,
+                        "height": dimension,
+                        "resampling": Resampling.bilinear,
+                    }
+                    # If raster has Ground Control Points (e.g. Sentinel-1 GRD on AWS), supply GCP transform
+                    if src.crs is None and src.gcps and src.gcps[0]:
+                        gcps, gcp_crs = src.gcps
+                        vrt_kwargs["src_crs"] = gcp_crs or "EPSG:4326"
+                        vrt_kwargs["src_transform"] = rasterio.transform.from_gcps(gcps)
 
-            with WarpedVRT(src, **vrt_kwargs) as vrt:
-                raw = vrt.read(1, masked=True)
-                data = raw.filled(0).astype(np.float32)
-                mask = ~np.ma.getmaskarray(raw) & (data > 0)
-                return data, mask
+                    with WarpedVRT(src, **vrt_kwargs) as vrt:
+                        raw = vrt.read(1, masked=True)
+                        data = raw.filled(0).astype(np.float32)
+                        mask = ~np.ma.getmaskarray(raw) & (data > 0)
+                        return data, mask
+            except Exception as exc:
+                last_err = exc
+                logger.warning(
+                    "Attempt %s/3 failed reading windowed band from %s: %s",
+                    attempt + 1,
+                    href,
+                    exc,
+                )
+                time.sleep(1.0)
+        if last_err:
+            raise last_err
 
     @classmethod
     def _classify_damage(
@@ -392,13 +413,50 @@ class StormDamageService:
 
         # 4. Stream raster windows concurrently
         loop = asyncio.get_running_loop()
-        pre_task = loop.run_in_executor(
-            None, self._read_windowed_band, pre_url, self.bbox, 512
-        )
-        post_task = loop.run_in_executor(
-            None, self._read_windowed_band, post_url, self.bbox, 512
-        )
-        (pre_data, pre_mask), (post_data, post_mask) = await asyncio.gather(pre_task, post_task)
+        try:
+            pre_task = loop.run_in_executor(
+                None, self._read_windowed_band, pre_url, self.bbox, 512
+            )
+            post_task = loop.run_in_executor(
+                None, self._read_windowed_band, post_url, self.bbox, 512
+            )
+            (pre_data, pre_mask), (post_data, post_mask) = await asyncio.gather(pre_task, post_task)
+        except Exception as exc:
+            if sensor_type == "optical" and self.req.prefer_sensor == "auto":
+                logger.warning("Optical scene read failed (%s); falling back to all-weather Sentinel-1 SAR.", exc)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    sar_post = await self._query_stac(
+                        session=session,
+                        collections=sar_collection,
+                        start_date=post_storm_start,
+                        end_date=post_storm_end,
+                        cloud_cover_limit=None,
+                        sort_ascending=True,
+                    )
+                    pre_sar = await self._query_stac(
+                        session=session,
+                        collections=sar_collection,
+                        start_date=pre_storm_start,
+                        end_date=pre_storm_end,
+                        cloud_cover_limit=None,
+                        sort_ascending=False,
+                    )
+                    if not sar_post or not pre_sar:
+                        raise ValueError(f"Optical scene read failed ({exc}) and no fallback Sentinel-1 SAR scenes found.") from exc
+                    selected_post_item = sar_post[0]
+                    pre_item = pre_sar[0]
+                    sensor_type = "sar"
+                    post_raw_url = selected_post_item.get("assets", {}).get("vv", {}).get("href") or selected_post_item.get("assets", {}).get("visual", {}).get("href")
+                    pre_raw_url = pre_item.get("assets", {}).get("vv", {}).get("href") or pre_item.get("assets", {}).get("visual", {}).get("href")
+                    pre_url, post_url = await asyncio.gather(
+                        self._sign_href_if_needed(session, pre_raw_url),
+                        self._sign_href_if_needed(session, post_raw_url),
+                    )
+                    pre_task = loop.run_in_executor(None, self._read_windowed_band, pre_url, self.bbox, 512)
+                    post_task = loop.run_in_executor(None, self._read_windowed_band, post_url, self.bbox, 512)
+                    (pre_data, pre_mask), (post_data, post_mask) = await asyncio.gather(pre_task, post_task)
+            else:
+                raise
 
         valid = pre_mask & post_mask
 

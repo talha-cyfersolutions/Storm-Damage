@@ -12,6 +12,7 @@ os.environ["APP_ENV"] = "testing"
 os.environ["RATE_LIMIT_ENABLED"] = "true"
 os.environ["API_KEY_REQUIRED"] = "false"
 os.environ["COG_STORAGE_BACKEND"] = "local"
+os.environ["STORM_DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="storm_test_db_"), "storms.db")
 
 from config import Config
 from main import app

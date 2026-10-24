@@ -18,7 +18,7 @@ from middleware import (
     SelectiveGZipMiddleware,
     register_error_handlers,
 )
-from routes import health_router, storm_router
+from routes import health_router, storm_events_router, storm_router
 
 logger = logging.getLogger("geoapi.main")
 
@@ -110,6 +110,7 @@ app.include_router(health_router, prefix="/api")
 
 # Primary Versioned API Routes (/api/v1)
 app.include_router(storm_router, prefix="/api/v1", tags=["Storm Damage Imagery v1"])
+app.include_router(storm_events_router, prefix="/api/v1", tags=["Storm Events & NOAA Imagery"])
 
 # Backwards Compatibility Route (/api)
 app.include_router(storm_router, prefix="/api", tags=["Storm Damage Imagery (Legacy)"])
@@ -130,6 +131,9 @@ async def root_overview() -> dict[str, str | dict[str, str]]:
             "readiness": "/health/ready",
             "liveness": "/health/live",
             "process_damage": "/api/v1/process-damage",
+            "storms_active": "/api/v1/storms/active",
+            "storms_history": "/api/v1/storms/history",
+            "noaa_imagery_search": "/api/v1/imagery/noaa/search",
             "cog_assets": "/api/v1/cog/assets/{event_id}/{acquisition_date}.tif",
         },
     }

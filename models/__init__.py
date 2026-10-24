@@ -8,7 +8,30 @@ from .stormModel import (
     StormSymbologyClass,
 )
 
+from .stormEventModel import (
+    AnalyzeNoaaDamageRequest,
+    AnalyzeStormRequest,
+    ImageryItem,
+    ImagerySearchResponse,
+    NoaaSyncResult,
+    StormAnalysisResponse,
+    StormEvent,
+    StormEventList,
+    StormSyncResult,
+    SyncJob,
+)
+
 __all__ = [
+    "AnalyzeNoaaDamageRequest",
+    "SyncJob",
+    "AnalyzeStormRequest",
+    "ImageryItem",
+    "ImagerySearchResponse",
+    "NoaaSyncResult",
+    "StormAnalysisResponse",
+    "StormEvent",
+    "StormEventList",
+    "StormSyncResult",
     "ComputedStormDamageResponse",
     "StormDamageAsset",
     "StormDamageRequest",

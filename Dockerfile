@@ -57,7 +57,7 @@ RUN groupadd -g 1001 appgroup && \
 COPY . /app
 
 # Ensure directories exist and have proper permissions
-RUN mkdir -p /app/cog-storage && \
+RUN mkdir -p /app/cog-storage /app/data && \
     chown -R appuser:appgroup /app
 
 USER appuser

@@ -143,6 +143,27 @@
     /* Opacity Slider */
     .slider-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #94a3b8; }
     .slider-row input[type=range] { width: 60%; }
+
+    /* Custom Mapbox Storm Popup */
+    .storm-custom-popup .mapboxgl-popup-content {
+      background: #0f172a !important;
+      color: #f8fafc !important;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7);
+      padding: 12px;
+    }
+    .storm-custom-popup .mapboxgl-popup-close-button {
+      color: #94a3b8 !important;
+      font-size: 16px;
+      padding: 4px;
+      right: 4px;
+      top: 4px;
+    }
+    .storm-custom-popup .mapboxgl-popup-tip {
+      border-top-color: #0f172a !important;
+      border-bottom-color: #0f172a !important;
+    }
   </style>
 </head>
 <body>
@@ -214,12 +235,66 @@
       <span id="btn-label">Process Storm Damage</span>
     </button>
 
+    <!-- Storms & NOAA imagery -->
+    <div class="stats-card" id="storms-card">
+      <div class="stat-header"><h3>US Storms (NOAA)</h3></div>
+      <div class="form-row">
+        <button class="btn-primary" type="button" onclick="loadActiveStorms()">Active alerts</button>
+        <button class="btn-primary" type="button" onclick="loadStormHistory(true)">In view</button>
+        <button class="btn-primary" style="background:#334155;" type="button" onclick="loadStormHistory(false)">All US</button>
+      </div>
+      <div class="form-row">
+        <select id="storm-type">
+          <option value="Tornado" selected>Tornado</option>
+          <option value="Hurricane">Hurricane</option>
+          <option value="Tropical Storm">Tropical Storm</option>
+          <option value="Flash Flood">Flash Flood</option>
+          <option value="Thunderstorm Wind">Thunderstorm Wind</option>
+          <option value="">Any type</option>
+        </select>
+        <select id="storm-min-ef">
+          <option value="">Any rating</option>
+          <option value="1">EF1+</option>
+          <option value="2">EF2+</option>
+          <option value="3">EF3+</option>
+        </select>
+        <select id="storm-year-filter">
+          <option value="" selected>Any year</option>
+          <option value="2026">2026</option>
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+          <option value="2023">2023</option>
+          <option value="2022">2022</option>
+          <option value="2021">2021</option>
+          <option value="2020">2020</option>
+        </select>
+      </div>
+      <!-- Year sync controls -->
+      <div class="form-row" style="align-items:center;background:#0f172a;padding:5px 6px;border-radius:4px;gap:6px;">
+        <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Sync NCEI:</span>
+        <select id="sync-year-select" style="padding:4px;font-size:11px;flex:1;">
+          <option value="2024" selected>2024</option>
+          <option value="2023">2023</option>
+          <option value="2022">2022</option>
+          <option value="2021">2021</option>
+          <option value="2020">2020</option>
+          <option value="2025">2025</option>
+          <option value="2026">2026</option>
+          <option value="2020-2024">All 2020–2024</option>
+          <option value="all">All Recent (2018–2026)</option>
+        </select>
+        <button class="btn-primary" style="padding:4px 8px;font-size:11px;background:#0284c7;white-space:nowrap;" type="button" onclick="syncSelectedYears()">📥 Sync</button>
+      </div>
+      <div id="storm-list" style="max-height:160px;overflow-y:auto;font-size:12px;display:flex;flex-direction:column;gap:4px;"></div>
+      <div id="imagery-list" style="font-size:12px;display:flex;flex-direction:column;gap:4px;"></div>
+    </div>
+
     <!-- Layer controls -->
     <div class="form-group">
       <label for="view-mode">Overlay Visualization</label>
       <select id="view-mode" onchange="switchViewMode(this.value)">
         <option value="classification" selected>Damage Classification (Categorical)</option>
-        <option value="rgb">False-Color SAR Composite (RGB Change)</option>
+        <option value="rgb">RGB / False-Color Composite</option>
       </select>
     </div>
 
@@ -378,7 +453,10 @@
       }
     }
 
+    let currentPlatform = "SAR";
+
     async function renderResults(data, apiUrl) {
+      currentPlatform = data.platform || "SAR";
       // 1. Update Stats Card
       document.getElementById("stats-card").style.display = "flex";
       document.getElementById("platform-badge").innerText = data.platform || "SAR";
@@ -425,12 +503,323 @@
       await renderCogOverlay(cogFullUrl, [minX, minY, maxX, maxY]);
     }
 
+    // ---------- NOAA storms & aerial imagery ----------
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    let stormMarkers = [];
+    let noaaLayerIds = [];
+
+    function apiBase() { return document.getElementById("api-url").value.replace(/\/+$/, ""); }
+
+    async function apiGet(path, params = {}) {
+      const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null));
+      const resp = await fetch(`${apiBase()}${path}${qs.toString() ? "?" + qs : ""}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.error?.message || `HTTP ${resp.status}`);
+      }
+      return resp.json();
+    }
+
+    let loadedStormEventsMap = {};
+
+    function renderStormList(events) {
+      stormMarkers.forEach((m) => m.remove());
+      stormMarkers = [];
+      loadedStormEventsMap = {};
+      const list = document.getElementById("storm-list");
+      list.innerHTML = events.length ? "" : "<em>No storms found.</em>";
+      events.forEach((ev) => {
+        loadedStormEventsMap[ev.id] = ev;
+        const row = document.createElement("div");
+        row.style.cssText = "background:#0f172a;padding:6px 8px;border-radius:4px;cursor:pointer;";
+        row.innerHTML = `<b>${esc(ev.event_type)}</b> ${esc(ev.rating || "")} &middot; ${esc(ev.begin_date)}<br>` +
+          `<span style="color:#94a3b8">${esc(ev.location || ev.state || "")}</span>`;
+        list.appendChild(row);
+
+        let marker = null;
+        if (ev.begin_lat != null) {
+          const ratingBadge = ev.rating
+            ? `<span style="background:#dc2626;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:bold;">${esc(ev.rating)}</span>`
+            : "";
+          const locStr = [ev.location, ev.state].filter(Boolean).join(", ") || "Unknown Location";
+          const pathInfo = (ev.path_length_miles != null)
+            ? `<div style="margin-top:2px;"><b>Path:</b> ${ev.path_length_miles} mi &times; ${ev.path_width_yards || 0} yds</div>`
+            : "";
+          const propDamage = ev.damage_property
+            ? `<div style="margin-top:2px;"><b>Damage:</b> $${esc(ev.damage_property)}</div>`
+            : "";
+          const casualties = (ev.deaths > 0 || ev.injuries > 0)
+            ? `<div style="margin-top:2px;color:#ef4444;font-weight:bold;">⚠️ ${ev.deaths} deaths, ${ev.injuries} injuries</div>`
+            : "";
+          const narrative = ev.narrative
+            ? `<div style="margin-top:6px;max-height:100px;overflow-y:auto;font-size:11px;color:#cbd5e1;background:#1e293b;padding:6px 8px;border-radius:4px;line-height:1.4;">${esc(ev.narrative)}</div>`
+            : "";
+
+          const popupContent = `
+            <div style="font-family:sans-serif;max-width:280px;font-size:12px;line-height:1.4;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px;">
+                <b style="font-size:13px;color:#f97316;">${esc(ev.event_type)}</b>
+                ${ratingBadge}
+              </div>
+              <div style="color:#94a3b8;margin-bottom:4px;font-size:11px;">📍 ${esc(locStr)}</div>
+              <div><b>Date:</b> ${esc(ev.begin_date)}${ev.end_date && ev.end_date !== ev.begin_date ? " to " + esc(ev.end_date) : ""}</div>
+              ${pathInfo}
+              ${propDamage}
+              ${casualties}
+              ${narrative}
+              <button onclick="window.selectStormById('${esc(ev.id)}')" style="margin-top:8px;width:100%;padding:6px;background:#0284c7;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;">
+                ⚡ Analyze Storm Damage
+              </button>
+            </div>
+          `;
+
+          const popup = new mapboxgl.Popup({ offset: 15, maxWidth: "320px", className: "storm-custom-popup" })
+            .setHTML(popupContent);
+
+          marker = new mapboxgl.Marker({ color: "#f97316", scale: 0.75 })
+            .setLngLat([ev.begin_lon, ev.begin_lat])
+            .setPopup(popup)
+            .addTo(map);
+
+          marker.getElement().style.cursor = "pointer";
+          marker.getElement().addEventListener("click", () => {
+            selectStorm(ev, false);
+          });
+          stormMarkers.push(marker);
+        }
+
+        row.onclick = () => {
+          selectStorm(ev, true);
+          if (marker) marker.togglePopup();
+        };
+      });
+    }
+
+    window.selectStormById = (id) => {
+      const ev = loadedStormEventsMap[id];
+      if (ev) selectStorm(ev, true);
+    };
+
+    async function loadActiveStorms() {
+      try {
+        const data = await apiGet("/api/v1/storms/active");
+        renderStormList(data.events);
+      } catch (e) { alert("Active alerts: " + e.message); }
+    }
+
+    async function loadStormHistory(useBbox = true) {
+      const params = {
+        type: document.getElementById("storm-type").value,
+        min_rating: document.getElementById("storm-min-ef").value,
+        limit: 50,
+      };
+      const yearFilter = document.getElementById("storm-year-filter").value;
+      if (yearFilter) {
+        params.from = `${yearFilter}-01-01`;
+        params.to = `${yearFilter}-12-31`;
+      }
+      if (useBbox) {
+        const b = map.getBounds();
+        params.bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(",");
+      }
+      try {
+        const data = await apiGet("/api/v1/storms/history", params);
+        renderStormList(data.events);
+        if (!data.count) {
+          const list = document.getElementById("storm-list");
+          list.innerHTML = `<em style="color:#94a3b8;padding:4px;">No matching storms ${useBbox ? "in current map view. Try panning or click 'All US'." : "found."}</em>`;
+        }
+      } catch (e) { alert("Storm history: " + e.message); }
+    }
+
+    async function syncSelectedYears() {
+      const val = document.getElementById("sync-year-select").value;
+      const list = document.getElementById("storm-list");
+      list.innerHTML = `<em style="color:#38bdf8;padding:4px;">⏳ Starting sync for ${val}...</em>`;
+      const qs = (val.includes("-") || val === "all") ? `years=${val}` : `year=${val}`;
+      try {
+        const resp = await fetch(`${apiBase()}/api/v1/storms/sync?${qs}`, { method: "POST" });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err?.error?.message || `HTTP ${resp.status}`);
+        }
+        const job = await resp.json();
+        list.innerHTML = `<em style="color:#38bdf8;padding:4px;">⏳ Syncing NCEI Storm Events ${val} in background (Job ${job.id})...</em>`;
+        pollJob(job.id, () => {
+          list.innerHTML = `<span style="color:#10b981;padding:4px;">✅ Synced ${val} storms! Click 'All US' to view.</span>`;
+          loadStormHistory(false);
+        });
+      } catch (e) { alert("Sync failed: " + e.message); }
+    }
+
+    async function syncStormsYear(year = 2024) {
+      document.getElementById("sync-year-select").value = String(year);
+      await syncSelectedYears();
+    }
+
+    async function pollJob(jobId, onDone) {
+      const interval = setInterval(async () => {
+        try {
+          const job = await apiGet(`/api/v1/sync/jobs/${jobId}`);
+          if (job.status === "done") {
+            clearInterval(interval);
+            if (onDone) onDone();
+          } else if (job.status === "failed") {
+            clearInterval(interval);
+            alert("Sync job failed: " + (job.detail || "unknown error"));
+          }
+        } catch (_) { clearInterval(interval); }
+      }, 2000);
+    }
+
+    async function selectStorm(ev, autoAnalyze = true) {
+      const lat = ((ev.begin_lat + (ev.end_lat ?? ev.begin_lat)) / 2).toFixed(4);
+      const lon = ((ev.begin_lon + (ev.end_lon ?? ev.begin_lon)) / 2).toFixed(4);
+      document.getElementById("lat").value = lat;
+      document.getElementById("lon").value = lon;
+      document.getElementById("start-date").value = ev.begin_date;
+      document.getElementById("end-date").value = ev.end_date || ev.begin_date;
+      document.getElementById("incident-name").value = `${ev.event_type} - ${ev.location || ev.state || ""}`;
+      map.flyTo({ center: [parseFloat(lon), parseFloat(lat)], zoom: 12 });
+      if (autoAnalyze) {
+        await analyzeStorm(ev.id);
+      }
+    }
+
+    async function analyzeStorm(id) {
+      try {
+        const resp = await fetch(`${apiBase()}/api/v1/storms/${encodeURIComponent(id)}/analyze`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err?.error?.message || `HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+        if (data.analysis) await renderResults(data.analysis, apiBase());
+        else if (data.message) alert(data.message);
+        renderImagery(data.imagery);
+      } catch (e) { alert("Storm analysis: " + e.message); }
+    }
+
+    function clearNoaaLayers() {
+      noaaLayerIds.forEach((id) => {
+        if (map.getLayer(id)) map.removeLayer(id);
+        if (map.getSource(id)) map.removeSource(id);
+      });
+      noaaLayerIds = [];
+    }
+
+    function renderImagery(imagery) {
+      clearNoaaLayers();
+      const box = document.getElementById("imagery-list");
+      if (!imagery.items.length) {
+        box.innerHTML = `<em>${esc(imagery.message || "No NOAA aerial imagery for this area.")}</em>`;
+        return;
+      }
+      box.innerHTML = "<b>NOAA aerial flights</b>";
+      imagery.items.forEach((item) => {
+        const id = `noaa-${item.event}-${item.flight}`;
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;flex-direction:column;gap:3px;background:#0f172a;padding:5px;border-radius:4px;";
+        row.innerHTML = `
+          <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
+            <input type="checkbox"> <b>${esc(item.date)}</b> &middot; ${esc(item.event.replace(/_/g, " "))} <span style="color:#94a3b8">(${item.tile_count} tiles)</span>
+          </label>
+          <button class="btn-primary" style="margin-top:2px;padding:3px 6px;font-size:11px;background:#0284c7;" type="button">
+            ⚡ Detect Damage from Aerial Photography (0.3m)
+          </button>
+        `;
+        row.querySelector("input").onchange = (e) => {
+          if (e.target.checked) {
+            map.addSource(id, { type: "raster", tiles: [apiBase() + item.tiles_url], tileSize: 256, minzoom: 12, maxzoom: 20, bounds: item.bbox });
+            map.addLayer({ id, type: "raster", source: id }, map.getLayer("cog-raster-layer") ? "cog-raster-layer" : undefined);
+            noaaLayerIds.push(id);
+          } else if (map.getLayer(id)) {
+            map.removeLayer(id); map.removeSource(id);
+            noaaLayerIds = noaaLayerIds.filter((x) => x !== id);
+          }
+        };
+        row.querySelector("button").onclick = () => runNoaaAerialDamage(item.event, item.flight);
+        box.appendChild(row);
+      });
+    }
+
+    async function runNoaaAerialDamage(event, flight) {
+      const lat = parseFloat(document.getElementById("lat").value);
+      const lon = parseFloat(document.getElementById("lon").value);
+      const buffer = parseFloat(document.getElementById("buffer-km").value || 2.0);
+      try {
+        const resp = await fetch(`${apiBase()}/api/v1/imagery/noaa/analyze-damage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: event,
+            flight: flight,
+            latitude: lat,
+            longitude: lon,
+            buffer_km: buffer,
+            dimension: 512,
+          }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err?.error?.message || `HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+        await renderResults(data, apiBase());
+      } catch (e) {
+        alert("NOAA Aerial Damage Analysis: " + e.message);
+      }
+    }
+
     let loadedRasters = null;
     let loadedBbox = null;
     let loadedDimensions = null;
 
+    function updateLegend(mode) {
+      const legend = document.getElementById("legend");
+      if (!legend) return;
+      const isAerial = currentPlatform && currentPlatform.includes("Aerial");
+
+      if (mode === "rgb") {
+        if (isAerial) {
+          legend.innerHTML = `
+            <div class="legend-title">NOAA True-Color Aerial</div>
+            <div class="legend-item"><div class="legend-box" style="background: #38bdf8;"></div> 0.3m Orthorectified Aerial Photography</div>
+          `;
+        } else {
+          legend.innerHTML = `
+            <div class="legend-title">SAR Composite (RGB Change)</div>
+            <div class="legend-item"><div class="legend-box" style="background: #10b981;"></div> Pre-Storm Dominant (Vegetation / Intact)</div>
+            <div class="legend-item"><div class="legend-box" style="background: #c026d3;"></div> Post-Storm Change / Debris Field</div>
+            <div class="legend-item"><div class="legend-box" style="background: #2563eb;"></div> Signal Drop / Standing Water</div>
+          `;
+        }
+      } else {
+        if (isAerial) {
+          legend.innerHTML = `
+            <div class="legend-title">Aerial Damage Classification</div>
+            <div class="legend-item"><div class="legend-box" style="background: #10b981;"></div> Undamaged Terrain / Intact</div>
+            <div class="legend-item"><div class="legend-box" style="background: #eab308;"></div> Minor Disturbance / Flooded</div>
+            <div class="legend-item"><div class="legend-box" style="background: #f97316;"></div> Moderate Damage / Blue Tarp</div>
+            <div class="legend-item"><div class="legend-box" style="background: #dc2626;"></div> Severe Structural Collapse</div>
+          `;
+        } else {
+          legend.innerHTML = `
+            <div class="legend-title">Classification Symbology</div>
+            <div class="legend-item"><div class="legend-box" style="background: #10b981;"></div> Undamaged Terrain</div>
+            <div class="legend-item"><div class="legend-box" style="background: #eab308;"></div> Minor Inundation / Change</div>
+            <div class="legend-item"><div class="legend-box" style="background: #f97316;"></div> Moderate Damage / Debris</div>
+            <div class="legend-item"><div class="legend-box" style="background: #dc2626;"></div> Severe Collapse / Standing Flood</div>
+          `;
+        }
+      }
+    }
+
     function switchViewMode(mode) {
       if (!loadedRasters || !loadedBbox) return;
+      updateLegend(mode);
       renderCanvasOverlay(mode);
     }
 
@@ -443,6 +832,7 @@
         loadedBbox = bbox;
 
         const currentMode = document.getElementById("view-mode").value;
+        updateLegend(currentMode);
         renderCanvasOverlay(currentMode);
       } catch (err) {
         console.error("Failed to render COG overlay via GeoTIFF.js:", err);

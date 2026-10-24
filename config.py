@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     NASA_FIRMS_MAP_KEY: str | None = None
     NASA_FIRMS_URL: str = "https://firms.modaps.eosdis.nasa.gov/api"
 
+    # NOAA storms & imagery
+    NWS_API_URL: str = "https://api.weather.gov"
+    NWS_USER_AGENT: str = "storm-damage-api (set NWS_USER_AGENT to your contact email)"
+    NCEI_STORM_EVENTS_URL: str = "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/"
+    NOAA_ERI_BUCKET: str = "noaa-eri-pds"
+    STORM_DB_PATH: str = str(BASE_DIR / "data" / "storms.db")
+
     # CORS — Allow all frontend origins
     FRONTEND_URLS: str = "*"
     CORS_ALLOW_CREDENTIALS: bool = True
