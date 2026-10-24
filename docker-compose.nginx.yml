@@ -1,0 +1,32 @@
+# ==============================================================================
+# Docker Compose with NGINX Reverse Proxy for Storm Damage API
+# Usage: docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
+# ==============================================================================
+
+services:
+  storm-damage-api:
+    # Remove public host port binding; NGINX proxies directly to it
+    ports: !override []
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:alpine
+    container_name: storm-damage-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_etc:/etc/letsencrypt:ro
+      - certbot_var:/var/www/certbot:ro
+    depends_on:
+      storm-damage-api:
+        condition: service_healthy
+
+volumes:
+  certbot_etc:
+  certbot_var:
+

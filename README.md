@@ -98,6 +98,9 @@ docker run -p 8000:8000 --env-file .env storm-damage-api
 
 # Or with Docker Compose
 docker compose up -d
+
+# Or with Production NGINX Reverse Proxy
+docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d --build
 ```
 
 ---
