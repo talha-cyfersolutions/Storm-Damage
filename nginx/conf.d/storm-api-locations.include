@@ -10,7 +10,7 @@ client_max_body_size 50M;
 # Avoid filling access logs with routine container & load-balancer polling
 # ------------------------------------------------------------------------------
 location ~ ^/(health|health/live|health/ready)$ {
-    proxy_pass 16.171.31.245;
+    proxy_pass http://storm_api;
     proxy_http_version 1.1;
 
     proxy_set_header Host $host;

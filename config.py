@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = 60
     HEAVY_RATE_LIMIT_REQUESTS: int = 15
     MAX_PAYLOAD_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
-    TRUSTED_PROXIES: str = "127.0.0.1,::1"
+    TRUSTED_PROXIES: str = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
     # Logging
     LOG_LEVEL: str = "INFO"

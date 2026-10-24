@@ -10,6 +10,29 @@ from config import Config
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+def is_trusted_proxy(ip_str: str) -> bool:
+    """Checks whether an IP address belongs to the trusted proxy list or subnets."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return ip_str in Config.trusted_proxy_list
+
+    for proxy in Config.trusted_proxy_list:
+        if proxy == "*":
+            return True
+        try:
+            if "/" in proxy:
+                if ip in ipaddress.ip_network(proxy, strict=False):
+                    return True
+            else:
+                if ip == ipaddress.ip_address(proxy):
+                    return True
+        except ValueError:
+            if ip_str == proxy:
+                return True
+    return False
+
+
 def get_client_ip(request: Request) -> str:
     """
     Safely resolves the client's IP address, accounting for reverse proxies
@@ -17,8 +40,7 @@ def get_client_ip(request: Request) -> str:
     """
     direct_ip = request.client.host if request.client else "127.0.0.1"
 
-    trusted = set(Config.trusted_proxy_list)
-    if direct_ip not in trusted:
+    if not is_trusted_proxy(direct_ip):
         return direct_ip
 
     # If the direct peer is trusted, evaluate forwarded headers

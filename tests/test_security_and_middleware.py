@@ -78,3 +78,17 @@ def test_api_key_auth_flow(client: TestClient) -> None:
         Config.API_KEY_REQUIRED = original_req
         Config.API_KEY = original_key
 
+
+def test_trusted_proxy_client_ip_resolution() -> None:
+    from unittest.mock import Mock
+    from core.security import get_client_ip
+
+    # Request from Docker subnet (e.g. 172.18.0.4) with forwarded public client IP
+    req = Mock()
+    req.client.host = "172.18.0.4"
+    req.headers = {"x-forwarded-for": "203.0.113.195, 172.18.0.4"}
+
+    resolved_ip = get_client_ip(req)
+    assert resolved_ip == "203.0.113.195"
+
+
