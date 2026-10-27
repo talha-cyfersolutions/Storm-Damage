@@ -79,7 +79,7 @@ and Maryland. NCEI sync jobs download the selected years but persist only damagi
 events in those three jurisdictions. Historical queries from the viewer include
 `region=mid_atlantic`; API consumers can use the same filter explicitly.
 
-Satellite scene selection is limited to two days before/after the requested storm
+Satellite scene selection is limited to three days before/after the requested storm
 dates. `auto` checks Sentinel-2 and Landsat Collection 2 Level-2 optical scenes,
 then falls back to Sentinel-1 SAR when optical imagery is unavailable or cannot be
 read. The generated COG contains the complete requested analysis bounding box; it

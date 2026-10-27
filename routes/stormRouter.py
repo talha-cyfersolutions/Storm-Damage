@@ -25,7 +25,7 @@ RANGE_HEADER_REGEX = re.compile(r"^bytes=(\d*)-(\d*)$")
     summary="Compute Rapid Post-Storm Damage",
     description=(
         "Analyzes pre- and post-storm Sentinel-1, Sentinel-2, or Landsat imagery "
-        "within two days of the requested dates to generate "
+        "within three days of the requested dates to generate "
         "calibrated structural change detection, flood mapping, and a 4-band Cloud-Optimized GeoTIFF."
     ),
     responses={
@@ -44,7 +44,7 @@ async def process_storm_damage(
 ) -> ComputedStormDamageResponse:
     """
     Computes rapid post-storm damage extents using Sentinel-1 SAR, Sentinel-2, or Landsat
-    change detection. Scene searches are limited to two days around each requested date.
+    change detection. Scene searches are limited to three days around each requested date.
     Generates a 4-band Cloud-Optimized GeoTIFF with damage classifications and precise area statistics.
     """
     # Enforce heavy compute rate limiting

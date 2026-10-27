@@ -300,12 +300,12 @@ class StormDamageService:
 
     async def execute_analysis(self) -> ComputedStormDamageResponse:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        # Keep both scene searches within two days of the requested storm dates.
-        pre_storm_start = (self.req.storm_start_date - timedelta(days=2)).isoformat()
+        # Keep both scene searches within three days of the requested storm dates.
+        pre_storm_start = (self.req.storm_start_date - timedelta(days=3)).isoformat()
         pre_storm_end = (self.req.storm_start_date - timedelta(days=1)).isoformat()
         post_storm_start = self.req.storm_end_date.isoformat()
         post_storm_end = min(
-            (self.req.storm_end_date + timedelta(days=2)).isoformat(),
+            (self.req.storm_end_date + timedelta(days=3)).isoformat(),
             today_str,
         )
 
@@ -354,7 +354,7 @@ class StormDamageService:
                     f"No post-storm satellite scenes found in the target area between {post_storm_start} and {post_storm_end}."
                 )
 
-            # 2. Query a baseline within two days before the requested start.
+            # 2. Query a baseline within three days before the requested start.
             # Optical baselines may come from either Sentinel-2 or Landsat;
             # this avoids failing just because one provider has a revisit gap.
             if sensor_type == "sar":
@@ -372,7 +372,7 @@ class StormDamageService:
                 sort_ascending=False,
             )
             if not pre_items and sensor_type == "optical":
-                logger.info("No clear optical baseline; retrying the same two-day window with relaxed cloud filtering.")
+                logger.info("No clear optical baseline; retrying the same three-day window with relaxed cloud filtering.")
                 pre_items = await self._query_stac(
                     session=session,
                     collections=pre_collection,
@@ -407,7 +407,7 @@ class StormDamageService:
 
             if not pre_items:
                 raise ValueError(
-                    "No pre-storm baseline scene was found within the allowed two-day window "
+                    "No pre-storm baseline scene was found within the allowed three-day window "
                     f"({pre_storm_start} through {pre_storm_end}). "
                     "Try a nearby storm date, a smaller area, or Sentinel-1 SAR."
                 )
