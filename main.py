@@ -143,3 +143,9 @@ async def root_overview() -> dict[str, str | dict[str, str]]:
 async def get_viewer() -> FileResponse:
     """Serves the interactive Mapbox storm damage visualization UI."""
     return FileResponse(BASE_DIR / "index.html", media_type="text/html")
+
+
+@app.get("/api/v1/viewer-config", tags=["Viewer"], summary="Public viewer configuration")
+async def viewer_config() -> dict[str, str | None]:
+    """Returns browser-safe configuration without exposing server credentials."""
+    return {"mapbox_access_token": Config.MAPBOX_ACCESS_TOKEN}

@@ -17,6 +17,9 @@ from services.storms.db import storm_db
 
 logger = logging.getLogger("geoapi.storms.ncei")
 
+# The viewer is intentionally scoped to the National Capital Region.
+TARGET_STATES = {"DISTRICT OF COLUMBIA", "VIRGINIA", "MARYLAND"}
+
 # Event types that cause mappable damage and have a start coordinate.
 DAMAGING_TYPES = {
     "Tornado",
@@ -110,7 +113,7 @@ async def list_available_years() -> list[int]:
 
 
 async def sync_year(year: int) -> int:
-    """Download and import one year of NCEI Storm Events. Returns rows imported."""
+    """Download and import only National Capital Region events for one year."""
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         name = await _find_year_filename(session, year)
@@ -119,7 +122,8 @@ async def sync_year(year: int) -> int:
             resp.raise_for_status()
             payload = await resp.read()
     raw_csv = await asyncio.to_thread(gzip.decompress, payload)
-    events = await asyncio.to_thread(parse_storm_events_csv, raw_csv)
+    events = await asyncio.to_thread(parse_storm_events_csv, raw_csv, DAMAGING_TYPES)
+    events = [event for event in events if (event.state or "").upper() in TARGET_STATES]
     imported = await storm_db.upsert_events(events)
     logger.info("Imported %s NCEI events for %s", imported, year)
     return imported
@@ -135,4 +139,3 @@ async def sync_years(years: list[int]) -> tuple[int, int]:
         except Exception as exc:
             logger.warning("Failed importing NCEI year %s: %s", y, exc)
     return len(years), total
-

@@ -91,6 +91,13 @@ def test_history_endpoint_filters(client: TestClient) -> None:
 def test_history_rejects_bad_params(client: TestClient) -> None:
     assert client.get("/api/v1/storms/history", params={"bbox": "1,2,3"}).status_code == 400
     assert client.get("/api/v1/storms/history", params={"from": "nope"}).status_code == 400
+    assert client.get("/api/v1/storms/history", params={"region": "not-a-region"}).status_code == 400
+
+
+def test_viewer_config_is_available(client: TestClient) -> None:
+    response = client.get("/api/v1/viewer-config")
+    assert response.status_code == 200
+    assert "mapbox_access_token" in response.json()
 
 
 def test_analyze_unknown_event_404(client: TestClient) -> None:
@@ -203,4 +210,3 @@ def test_analyze_noaa_damage_endpoint_validation(client: TestClient) -> None:
     assert resp.status_code == 400
     msg = resp.json().get("detail") or resp.json().get("error", {}).get("message", "")
     assert "Provide either 'bbox'" in msg
-

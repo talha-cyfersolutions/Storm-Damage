@@ -65,12 +65,15 @@ def parse_alerts(payload: dict[str, Any]) -> list[StormEvent]:
     return events
 
 
-async def fetch_active_alerts(event_names: tuple[str, ...] = DEFAULT_EVENTS) -> list[StormEvent]:
+async def fetch_active_alerts(
+    event_names: tuple[str, ...] = DEFAULT_EVENTS,
+    areas: tuple[str, ...] = ("DC", "MD", "VA"),
+) -> list[StormEvent]:
     headers = {"User-Agent": Config.NWS_USER_AGENT, "Accept": "application/geo+json"}
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         # NWS accepts a comma separated list for `event`
-        params = {"event": ",".join(event_names), "status": "actual"}
+        params = {"event": ",".join(event_names), "area": ",".join(areas), "status": "actual"}
         async with session.get(f"{Config.NWS_API_URL}/alerts/active", params=params) as resp:
             if resp.status != 200:
                 logger.warning("NWS alerts returned HTTP %s", resp.status)

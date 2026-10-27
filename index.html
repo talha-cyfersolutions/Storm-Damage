@@ -16,6 +16,13 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body, html { width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; background: #0f172a; color: #f8fafc; }
     #map { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+    .region-overviews {
+      position: absolute; top: 16px; right: 16px; width: 300px; z-index: 9;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+    }
+    .region-overview { height: 132px; position: relative; border: 1px solid #334155; border-radius: 6px; overflow: hidden; background: #1e293b; }
+    .region-overview-map { width: 100%; height: 100%; }
+    .region-overview-label { position: absolute; left: 5px; bottom: 5px; z-index: 1; background: rgba(15,23,42,.85); padding: 2px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
 
     /* Floating Control Panel */
     .panel {
@@ -177,12 +184,6 @@
       <span class="badge" id="platform-badge">Sentinel-1</span>
     </div>
 
-    <!-- Mapbox Access Token Setup -->
-    <div class="form-group">
-      <label for="mapbox-token">Mapbox Token (Optional)</label>
-      <input type="text" id="mapbox-token" placeholder="Mapbox Access Token (uses open basemap if empty)">
-    </div>
-
     <div class="form-group">
       <label for="api-url">API Base URL</label>
       <input type="text" id="api-url" value="http://localhost:8000">
@@ -190,35 +191,35 @@
 
     <div class="form-group">
       <label for="incident-name">Incident Name</label>
-      <input type="text" id="incident-name" value="Beaumont EF1 Tornado">
+      <input type="text" id="incident-name" value="National Capital Region Storm">
     </div>
 
     <div class="form-row">
       <div class="form-group">
         <label for="lat">Latitude</label>
-        <input type="number" id="lat" step="0.0001" value="31.1770">
+        <input type="number" id="lat" step="0.0001" value="38.9072">
       </div>
       <div class="form-group">
         <label for="lon">Longitude</label>
-        <input type="number" id="lon" step="0.0001" value="-88.9422">
+        <input type="number" id="lon" step="0.0001" value="-77.0365">
       </div>
     </div>
 
     <div class="form-row">
       <div class="form-group">
         <label for="start-date">Start Date</label>
-        <input type="date" id="start-date" value="2024-05-06">
+        <input type="date" id="start-date" value="2024-05-01">
       </div>
       <div class="form-group">
         <label for="end-date">End Date</label>
-        <input type="date" id="end-date" value="2024-05-07">
+        <input type="date" id="end-date" value="2024-05-31">
       </div>
     </div>
 
     <div class="form-row">
       <div class="form-group">
         <label for="buffer">Buffer (km)</label>
-        <input type="number" id="buffer" min="1" max="50" value="6.0">
+        <input type="number" id="buffer" min="1" max="50" value="10.0">
       </div>
       <div class="form-group">
         <label for="sensor">Preferred Sensor</label>
@@ -237,11 +238,11 @@
 
     <!-- Storms & NOAA imagery -->
     <div class="stats-card" id="storms-card">
-      <div class="stat-header"><h3>US Storms (NOAA)</h3></div>
+      <div class="stat-header"><h3>DC / Virginia / Maryland Storms</h3></div>
       <div class="form-row">
         <button class="btn-primary" type="button" onclick="loadActiveStorms()">Active alerts</button>
         <button class="btn-primary" type="button" onclick="loadStormHistory(true)">In view</button>
-        <button class="btn-primary" style="background:#334155;" type="button" onclick="loadStormHistory(false)">All US</button>
+        <button class="btn-primary" style="background:#334155;" type="button" onclick="loadStormHistory(false)">Region</button>
       </div>
       <div class="form-row">
         <select id="storm-type">
@@ -329,53 +330,48 @@
     <div class="legend-item"><div class="legend-box" style="background: #dc2626;"></div> Severe Collapse / Standing Flood</div>
   </div>
 
+  <div class="region-overviews" aria-label="Regional maps">
+    <div class="region-overview"><div id="map-dc" class="region-overview-map"></div><span class="region-overview-label">District of Columbia</span></div>
+    <div class="region-overview"><div id="map-va" class="region-overview-map"></div><span class="region-overview-label">Virginia</span></div>
+    <div class="region-overview"><div id="map-md" class="region-overview-map"></div><span class="region-overview-label">Maryland</span></div>
+  </div>
+
   <script>
-    // Initialize Mapbox with fallback to open raster basemap if no token is provided
+    // The token is supplied by the API; the open basemap remains available for local use.
     let map;
-    const defaultCenter = [-88.9422, 31.1770];
-    const defaultZoom = 12;
+    const defaultCenter = [-77.25, 38.95];
+    const defaultZoom = 7;
+    const overviewMaps = [];
+    const regionViews = [
+      { id: "map-dc", center: [-77.0365, 38.9072], zoom: 10.5 },
+      { id: "map-va", center: [-78.6569, 37.4316], zoom: 6.2 },
+      { id: "map-md", center: [-76.6413, 39.0458], zoom: 6.8 },
+    ];
 
-    function initMap() {
-      const userToken = document.getElementById("mapbox-token").value.trim();
-      mapboxgl.accessToken = userToken || "";
+    function basemapStyle() {
+      return {
+        version: 8, sources: { "osm-tiles": { type: "raster", tiles: ["https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png"], tileSize: 256, attribution: "© OpenStreetMap contributors, © CARTO" } },
+        layers: [{ id: "osm-layer", type: "raster", source: "osm-tiles", minzoom: 0, maxzoom: 19 }]
+      };
+    }
 
-      if (userToken) {
-        map = new mapboxgl.Map({
-          container: "map",
-          style: "mapbox://styles/mapbox/dark-v11",
-          center: defaultCenter,
-          zoom: defaultZoom,
-        });
-      } else {
-        // Fallback: Free Carto Dark Matter raster basemap without requiring a Mapbox key
-        map = new mapboxgl.Map({
-          container: "map",
-          style: {
-            version: 8,
-            sources: {
-              "osm-tiles": {
-                type: "raster",
-                tiles: [
-                  "https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png"
-                ],
-                tileSize: 256,
-                attribution: "© OpenStreetMap contributors, © CARTO"
-              }
-            },
-            layers: [{
-              id: "osm-layer",
-              type: "raster",
-              source: "osm-tiles",
-              minzoom: 0,
-              maxzoom: 19
-            }]
-          },
-          center: defaultCenter,
-          zoom: defaultZoom,
-        });
-      }
+    function createMap(container, center, zoom, navigation = false) {
+      const instance = new mapboxgl.Map({
+        container, style: mapboxgl.accessToken ? "mapbox://styles/mapbox/dark-v11" : basemapStyle(), center, zoom,
+      });
+      if (navigation) instance.addControl(new mapboxgl.NavigationControl(), "top-right");
+      return instance;
+    }
 
-      map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    async function initMap() {
+      let token = "";
+      try {
+        const response = await fetch(`${window.location.origin}/api/v1/viewer-config`);
+        if (response.ok) token = (await response.json()).mapbox_access_token || "";
+      } catch (error) { console.warn("Viewer configuration unavailable; using open basemap.", error); }
+      mapboxgl.accessToken = token;
+      map = createMap("map", defaultCenter, defaultZoom, true);
+      regionViews.forEach((view) => overviewMaps.push(createMap(view.id, view.center, view.zoom)));
     }
 
     initMap();
@@ -388,12 +384,6 @@
       if (apiInput) {
         apiInput.value = detectedApi;
       }
-    });
-
-    // Re-initialize if Mapbox token changes
-    document.getElementById("mapbox-token").addEventListener("change", () => {
-      if (map) map.remove();
-      initMap();
     });
 
     function updateOpacity(val) {
@@ -506,6 +496,7 @@
     // ---------- NOAA storms & aerial imagery ----------
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     let stormMarkers = [];
+    let overviewMarkers = [];
     let noaaLayerIds = [];
 
     function apiBase() { return document.getElementById("api-url").value.replace(/\/+$/, ""); }
@@ -524,7 +515,9 @@
 
     function renderStormList(events) {
       stormMarkers.forEach((m) => m.remove());
+      overviewMarkers.forEach((m) => m.remove());
       stormMarkers = [];
+      overviewMarkers = [];
       loadedStormEventsMap = {};
       const list = document.getElementById("storm-list");
       list.innerHTML = events.length ? "" : "<em>No storms found.</em>";
@@ -586,6 +579,13 @@
             selectStorm(ev, false);
           });
           stormMarkers.push(marker);
+          overviewMaps.forEach((overviewMap) => {
+            overviewMarkers.push(
+              new mapboxgl.Marker({ color: "#f97316", scale: 0.5 })
+                .setLngLat([ev.begin_lon, ev.begin_lat])
+                .addTo(overviewMap)
+            );
+          });
         }
 
         row.onclick = () => {
@@ -611,6 +611,7 @@
       const params = {
         type: document.getElementById("storm-type").value,
         min_rating: document.getElementById("storm-min-ef").value,
+        region: "mid_atlantic",
         limit: 50,
       };
       const yearFilter = document.getElementById("storm-year-filter").value;
@@ -627,7 +628,7 @@
         renderStormList(data.events);
         if (!data.count) {
           const list = document.getElementById("storm-list");
-          list.innerHTML = `<em style="color:#94a3b8;padding:4px;">No matching storms ${useBbox ? "in current map view. Try panning or click 'All US'." : "found."}</em>`;
+          list.innerHTML = `<em style="color:#94a3b8;padding:4px;">No matching storms ${useBbox ? "in the current DC/VA/MD map view. Try panning or click 'Region'." : "found."}</em>`;
         }
       } catch (e) { alert("Storm history: " + e.message); }
     }
@@ -646,7 +647,7 @@
         const job = await resp.json();
         list.innerHTML = `<em style="color:#38bdf8;padding:4px;">⏳ Syncing NCEI Storm Events ${val} in background (Job ${job.id})...</em>`;
         pollJob(job.id, () => {
-          list.innerHTML = `<span style="color:#10b981;padding:4px;">✅ Synced ${val} storms! Click 'All US' to view.</span>`;
+          list.innerHTML = `<span style="color:#10b981;padding:4px;">✅ Synced ${val} DC/VA/MD storms! Click 'Region' to view.</span>`;
           loadStormHistory(false);
         });
       } catch (e) { alert("Sync failed: " + e.message); }
@@ -925,4 +926,3 @@
   </script>
 </body>
 </html>
-

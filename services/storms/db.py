@@ -119,6 +119,7 @@ class StormDB:
         end: str | None,
         event_type: str | None,
         min_rating: int | None,
+        states: list[str] | None,
         limit: int,
     ) -> list[StormEvent]:
         where, params = ["begin_lat IS NOT NULL", "begin_lon IS NOT NULL"], []
@@ -138,6 +139,10 @@ class StormDB:
             # rating looks like 'EF3'; non-EF rows are excluded when a minimum is requested
             where.append("rating LIKE 'EF%' AND CAST(substr(rating, 3) AS INTEGER) >= ?")
             params.append(min_rating)
+        if states:
+            placeholders = ",".join("?" for _ in states)
+            where.append(f"upper(state) IN ({placeholders})")
+            params.extend(state.upper() for state in states)
         sql = (
             f"SELECT {_EVENT_COLS} FROM storm_events WHERE {' AND '.join(where)} "
             "ORDER BY begin_date DESC LIMIT ?"
@@ -152,9 +157,10 @@ class StormDB:
         end: str | None = None,
         event_type: str | None = None,
         min_rating: int | None = None,
+        states: list[str] | None = None,
         limit: int = 200,
     ) -> list[StormEvent]:
-        return await self.run(self._query_events, bbox, start, end, event_type, min_rating, limit)
+        return await self.run(self._query_events, bbox, start, end, event_type, min_rating, states, limit)
 
     @staticmethod
     def _get_event(conn: sqlite3.Connection, event_id: str) -> StormEvent | None:
@@ -245,4 +251,3 @@ class StormDB:
 
 
 storm_db = StormDB()
-

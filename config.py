@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     # CORS — Allow all frontend origins
     FRONTEND_URLS: str = "*"
     CORS_ALLOW_CREDENTIALS: bool = True
+    # Mapbox public token used by the browser viewer. Keep this in .env, not source control.
+    MAPBOX_ACCESS_TOKEN: str | None = None
 
     # Security & API Protection
     API_KEY: str | None = None

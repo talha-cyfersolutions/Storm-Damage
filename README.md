@@ -72,6 +72,12 @@ Key environment variables:
 | `AWS_S3_BUCKET` | `burnscar` | S3 bucket name when backend is `s3` |
 | `RATE_LIMIT_ENABLED` | `true` | Sliding window rate limiting toggle |
 | `FRONTEND_URLS` | `http://localhost:3000...` | Comma-separated list of allowed CORS origins |
+| `MAPBOX_ACCESS_TOKEN` | `None` | Optional public Mapbox token served to the browser viewer |
+
+The viewer is scoped to the National Capital Region: District of Columbia, Virginia,
+and Maryland. NCEI sync jobs download the selected years but persist only damaging
+events in those three jurisdictions. Historical queries from the viewer include
+`region=mid_atlantic`; API consumers can use the same filter explicitly.
 
 ---
 
@@ -132,6 +138,8 @@ Interactive Swagger UI documentation is available at `/docs` (and ReDoc at `/red
 
 - `GET /api/v1/cog/assets/{event_id}/{acquisition_date}.tif`
   - Supports HTTP Range requests (`Range: bytes=0-1023`) for MapLibre GL, OpenLayers, QGIS, and Leaflet canvas streaming.
+- `GET /api/v1/viewer-config`
+  - Returns browser-safe viewer configuration, including the optional Mapbox public token.
 
 ---
 
@@ -142,4 +150,3 @@ Run the test suite using `pytest`:
 ```bash
 pytest -v
 ```
-

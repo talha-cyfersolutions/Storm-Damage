@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 from math import hypot
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, Security, status
 
@@ -52,6 +53,14 @@ def _parse_date(value: str | None, name: str) -> str | None:
         raise HTTPException(status_code=400, detail=f"{name} must be YYYY-MM-DD") from exc
 
 
+def _parse_region(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    if value.lower() in {"mid_atlantic", "dc-va-md", "national_capital_region"}:
+        return sorted(nceiStormEvents.TARGET_STATES)
+    raise HTTPException(status_code=400, detail="region must be 'mid_atlantic'")
+
+
 # ---------------------------------------------------------------- storms
 @storm_events_router.get(
     "/storms/active",
@@ -83,6 +92,7 @@ async def storm_history(
     date_to: str | None = Query(None, alias="to", description="YYYY-MM-DD"),
     event_type: str | None = Query(None, alias="type", description="e.g. Tornado, Hurricane, Flash Flood"),
     min_rating: int | None = Query(None, ge=0, le=5, description="Minimum EF rating (tornadoes only)"),
+    region: str | None = Query(None, description="Named region filter: mid_atlantic (DC, Virginia, Maryland)"),
     limit: int = Query(100, ge=1, le=500),
     _k: str | None = Security(verify_api_key),
 ) -> StormEventList:
@@ -93,6 +103,7 @@ async def storm_history(
         end=_parse_date(date_to, "to"),
         event_type=event_type,
         min_rating=min_rating,
+        states=_parse_region(region),
         limit=limit,
     )
     return StormEventList(count=len(events), events=events)
@@ -150,7 +161,7 @@ async def sync_storm_year(
 
     async def work() -> str:
         nyears, total = await nceiStormEvents.sync_years(target_years)
-        return f"imported {total} events across {nyears} years: {target_years}"
+        return f"imported {total} events (DC/VA/MD only) across {nyears} years: {target_years}"
 
     job_id = await jobs.start_job("ncei", target_label, work)
     return SyncJob(**await storm_db.get_job(job_id))
@@ -322,5 +333,3 @@ async def analyze_noaa_aerial_damage(
     except Exception as exc:
         logger.exception("NOAA aerial damage detection failed for event %s", body.event)
         raise HTTPException(status_code=500, detail="NOAA aerial damage analysis failed.") from exc
-
-
