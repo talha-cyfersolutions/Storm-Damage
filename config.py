@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str | None = None
     AWS_KEY_ACCESS_ID: str | None = None
     AWS_SECRET_ACCESS_KEY: str | None = None
+    AWS_REQUEST_PAYER: str = "requester"
     AWS_REGION: str = "eu-north-1"
     AWS_S3_BUCKET: str = "burnscar"
     COG_STORAGE_BACKEND: Literal["local", "s3"] = "local"

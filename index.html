@@ -318,8 +318,8 @@
     <div class="form-group">
       <label for="view-mode">Overlay Visualization</label>
       <select id="view-mode" onchange="switchViewMode(this.value)">
-        <option value="classification" selected>Damage Classification (Categorical)</option>
-        <option value="rgb">RGB / False-Color Composite</option>
+        <option value="rgb" selected>Full Satellite Imagery (RGB)</option>
+        <option value="classification">Damage Classification (Categorical)</option>
       </select>
     </div>
 
@@ -414,6 +414,11 @@
     function restoreAnalysisOverlays() {
       if (!map || !lastAnalysisData || !map.isStyleLoaded()) return;
       const data = lastAnalysisData;
+      if (map.getLayer("cog-raster-layer")) map.removeLayer("cog-raster-layer");
+      if (map.getSource("cog-raster-source")) map.removeSource("cog-raster-source");
+      if (map.getLayer("storm-bbox-fill")) map.removeLayer("storm-bbox-fill");
+      if (map.getLayer("storm-bbox-line")) map.removeLayer("storm-bbox-line");
+      if (map.getSource("storm-bbox")) map.removeSource("storm-bbox");
       map.addSource("storm-bbox", { type: "geojson", data: data.geojson });
       map.addLayer({ id: "storm-bbox-fill", type: "fill", source: "storm-bbox", paint: { "fill-color": "#38bdf8", "fill-opacity": 0.08 } });
       map.addLayer({ id: "storm-bbox-line", type: "line", source: "storm-bbox", paint: { "line-color": "#38bdf8", "line-width": 2, "line-dasharray": [2, 2] } });
@@ -423,7 +428,7 @@
     function switchBaseStyle(styleName) {
       if (!map || activeBaseStyle === styleName) return;
       activeBaseStyle = styleName;
-      map.once("style.load", () => {
+      map.once("idle", () => {
         restoreAnalysisOverlays();
         renderStormList(Object.values(loadedStormEventsMap));
       });

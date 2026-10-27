@@ -160,7 +160,12 @@ class StormDamageService:
             "VSI_CACHE_SIZE": "50000000",
             "AWS_NO_SIGN_REQUEST": "YES",
             "AWS_REGION": "eu-central-1",
+            "AWS_REQUEST_PAYER": Config.AWS_REQUEST_PAYER,
         }
+        if Config.aws_access_key_id:
+            env_vars["AWS_ACCESS_KEY_ID"] = Config.aws_access_key_id
+        if Config.AWS_SECRET_ACCESS_KEY:
+            env_vars["AWS_SECRET_ACCESS_KEY"] = Config.AWS_SECRET_ACCESS_KEY
         last_err: Exception | None = None
         for attempt in range(3):
             try:
@@ -445,7 +450,24 @@ class StormDamageService:
                     "Try Auto/Sentinel-2, Landsat, a smaller area, or a nearby date."
                 )
 
-            pre_item = pre_items[0]
+            post_properties = selected_post_item.get("properties", {})
+
+            def geometry_match_score(item: dict[str, Any]) -> tuple[int, int]:
+                properties = item.get("properties", {})
+                same_collection = int(
+                    item.get("collection") == selected_post_item.get("collection")
+                )
+                same_orbit = int(
+                    properties.get("sat:relative_orbit")
+                    == post_properties.get("sat:relative_orbit")
+                    and properties.get("sat:orbit_state")
+                    == post_properties.get("sat:orbit_state")
+                )
+                return same_collection, same_orbit
+
+            # Prefer matching collection/orbit geometry to maximize valid overlap
+            # across the full requested bounding box.
+            pre_item = max(pre_items, key=geometry_match_score)
 
             # 3. Extract asset links (VV amplitude for SAR, Visual for optical)
             post_assets = selected_post_item.get("assets", {})
