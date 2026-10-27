@@ -17,19 +17,22 @@
     body, html { width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; background: #0f172a; color: #f8fafc; }
     #map { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
     .region-overviews {
-      position: absolute; top: 16px; right: 16px; width: 300px; z-index: 9;
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+      position: absolute; top: 82px; right: 22px; width: min(520px, calc(100vw - 420px)); z-index: 9;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
     }
-    .region-overview { height: 132px; position: relative; border: 1px solid #334155; border-radius: 6px; overflow: hidden; background: #1e293b; }
+    .region-overview { height: 160px; position: relative; border: 1px solid rgba(148,163,184,.35); border-radius: 10px; overflow: hidden; background: #1e293b; box-shadow: 0 12px 30px rgba(0,0,0,.32); }
     .region-overview-map { width: 100%; height: 100%; }
-    .region-overview-label { position: absolute; left: 5px; bottom: 5px; z-index: 1; background: rgba(15,23,42,.85); padding: 2px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+    .region-overview-label { position: absolute; left: 8px; bottom: 8px; z-index: 1; background: rgba(15,23,42,.88); padding: 5px 7px; border-radius: 5px; font-size: 10px; font-weight: 700; }
+    .map-style-control { position: absolute; top: 18px; right: 22px; z-index: 11; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(15,23,42,.9); border: 1px solid rgba(148,163,184,.35); border-radius: 9px; box-shadow: 0 10px 24px rgba(0,0,0,.3); }
+    .map-style-control label { color: #cbd5e1; font-size: 10px; }
+    .map-style-control select { padding: 5px 8px; font-size: 11px; }
 
     /* Floating Control Panel */
     .panel {
       position: absolute;
       top: 16px;
       left: 16px;
-      width: 360px;
+      width: 380px;
       max-height: calc(100vh - 32px);
       background: rgba(15, 23, 42, 0.92);
       backdrop-filter: blur(12px);
@@ -77,6 +80,7 @@
       transition: border-color 0.15s;
     }
     input:focus, select:focus { border-color: #38bdf8; }
+    .section-label { color: #64748b; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 
     button.btn-primary {
       background: #0284c7;
@@ -171,11 +175,30 @@
       border-top-color: #0f172a !important;
       border-bottom-color: #0f172a !important;
     }
+    @media (max-width: 900px) {
+      .panel { width: min(380px, calc(100vw - 32px)); }
+      .region-overviews { top: auto; bottom: 18px; right: 18px; width: min(440px, calc(100vw - 36px)); }
+      .region-overview { height: 110px; }
+      .legend { bottom: 145px; }
+    }
+    @media (max-width: 620px) {
+      .region-overviews { display: none; }
+      .map-style-control { top: 14px; right: 14px; }
+      .panel { top: 58px; max-height: calc(100vh - 74px); }
+      .legend { right: 14px; bottom: 14px; }
+    }
   </style>
 </head>
 <body>
 
   <div id="map"></div>
+  <div class="map-style-control">
+    <label for="map-style">BASE MAP</label>
+    <select id="map-style" onchange="switchBaseStyle(this.value)">
+      <option value="dark" selected>Dark</option>
+      <option value="satellite">Satellite</option>
+    </select>
+  </div>
 
   <!-- Left Control Panel -->
   <div class="panel">
@@ -227,6 +250,7 @@
           <option value="auto" selected>Auto (Optical/SAR)</option>
           <option value="sar">Sentinel-1 SAR</option>
           <option value="optical">Sentinel-2 Optical</option>
+          <option value="landsat">Landsat 8/9 Optical</option>
         </select>
       </div>
     </div>
@@ -342,22 +366,31 @@
     const defaultCenter = [-77.25, 38.95];
     const defaultZoom = 7;
     const overviewMaps = [];
+    let activeBaseStyle = "dark";
+    let lastAnalysisData = null;
     const regionViews = [
       { id: "map-dc", center: [-77.0365, 38.9072], zoom: 10.5 },
       { id: "map-va", center: [-78.6569, 37.4316], zoom: 6.2 },
       { id: "map-md", center: [-76.6413, 39.0458], zoom: 6.8 },
     ];
 
-    function basemapStyle() {
+    function fallbackStyle(styleName) {
+      const tiles = styleName === "satellite"
+        ? ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]
+        : ["https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png"];
       return {
-        version: 8, sources: { "osm-tiles": { type: "raster", tiles: ["https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png"], tileSize: 256, attribution: "© OpenStreetMap contributors, © CARTO" } },
-        layers: [{ id: "osm-layer", type: "raster", source: "osm-tiles", minzoom: 0, maxzoom: 19 }]
+        version: 8, sources: { "base-tiles": { type: "raster", tiles, tileSize: 256, attribution: styleName === "satellite" ? "© Esri" : "© OpenStreetMap contributors, © CARTO" } },
+        layers: [{ id: "base-layer", type: "raster", source: "base-tiles", minzoom: 0, maxzoom: 19 }]
       };
     }
 
     function createMap(container, center, zoom, navigation = false) {
       const instance = new mapboxgl.Map({
-        container, style: mapboxgl.accessToken ? "mapbox://styles/mapbox/dark-v11" : basemapStyle(), center, zoom,
+        container,
+        style: mapboxgl.accessToken
+          ? `mapbox://styles/mapbox/${activeBaseStyle === "satellite" ? "satellite-streets-v12" : "dark-v11"}`
+          : fallbackStyle(activeBaseStyle),
+        center, zoom,
       });
       if (navigation) instance.addControl(new mapboxgl.NavigationControl(), "top-right");
       return instance;
@@ -372,6 +405,32 @@
       mapboxgl.accessToken = token;
       map = createMap("map", defaultCenter, defaultZoom, true);
       regionViews.forEach((view) => overviewMaps.push(createMap(view.id, view.center, view.zoom)));
+    }
+
+    function restoreAnalysisOverlays() {
+      if (!map || !lastAnalysisData || !map.isStyleLoaded()) return;
+      const data = lastAnalysisData;
+      map.addSource("storm-bbox", { type: "geojson", data: data.geojson });
+      map.addLayer({ id: "storm-bbox-fill", type: "fill", source: "storm-bbox", paint: { "fill-color": "#38bdf8", "fill-opacity": 0.08 } });
+      map.addLayer({ id: "storm-bbox-line", type: "line", source: "storm-bbox", paint: { "line-color": "#38bdf8", "line-width": 2, "line-dasharray": [2, 2] } });
+      if (loadedRasters && loadedBbox) renderCanvasOverlay(document.getElementById("view-mode").value);
+    }
+
+    function switchBaseStyle(styleName) {
+      if (!map || activeBaseStyle === styleName) return;
+      activeBaseStyle = styleName;
+      map.once("style.load", () => {
+        restoreAnalysisOverlays();
+        renderStormList(Object.values(loadedStormEventsMap));
+      });
+      map.setStyle(mapboxgl.accessToken
+        ? `mapbox://styles/mapbox/${styleName === "satellite" ? "satellite-streets-v12" : "dark-v11"}`
+        : fallbackStyle(styleName));
+      overviewMaps.forEach((overviewMap) => {
+        overviewMap.setStyle(mapboxgl.accessToken
+          ? `mapbox://styles/mapbox/${styleName === "satellite" ? "satellite-streets-v12" : "dark-v11"}`
+          : fallbackStyle(styleName));
+      });
     }
 
     initMap();
@@ -446,6 +505,7 @@
     let currentPlatform = "SAR";
 
     async function renderResults(data, apiUrl) {
+      lastAnalysisData = data;
       currentPlatform = data.platform || "SAR";
       // 1. Update Stats Card
       document.getElementById("stats-card").style.display = "flex";

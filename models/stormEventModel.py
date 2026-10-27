@@ -72,7 +72,7 @@ class NoaaSyncResult(BaseModel):
 
 class AnalyzeStormRequest(BaseModel):
     buffer_km: float = Field(default=10.0, ge=1.0, le=50.0)
-    prefer_sensor: Literal["auto", "sar", "optical"] = "auto"
+    prefer_sensor: Literal["auto", "sar", "optical", "landsat"] = "auto"
     days_after: int = Field(default=1, ge=0, le=30, description="Days after the event end to start the post-scene search")
     model_config = ConfigDict(extra="forbid")
 
@@ -93,4 +93,3 @@ class StormAnalysisResponse(BaseModel):
     analysis: dict[str, Any] | None = None
     imagery: ImagerySearchResponse
     message: str | None = None
-

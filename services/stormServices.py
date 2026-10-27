@@ -300,25 +300,31 @@ class StormDamageService:
 
     async def execute_analysis(self) -> ComputedStormDamageResponse:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        pre_storm_start = (self.req.storm_start_date - timedelta(days=30)).isoformat()
+        # Keep both scene searches within two days of the requested storm dates.
+        pre_storm_start = (self.req.storm_start_date - timedelta(days=2)).isoformat()
         pre_storm_end = (self.req.storm_start_date - timedelta(days=1)).isoformat()
         post_storm_start = self.req.storm_end_date.isoformat()
         post_storm_end = min(
-            (self.req.storm_end_date + timedelta(days=30)).isoformat(),
+            (self.req.storm_end_date + timedelta(days=2)).isoformat(),
             today_str,
         )
 
         sar_collection = ["sentinel-1-grd"] if self.provider == "aws" else ["sentinel-1-rtc"]
-        optical_collection = ["sentinel-2-l2a"]
+        optical_collections = ["sentinel-2-l2a", "landsat-c2-l2"]
 
         timeout = aiohttp.ClientTimeout(total=Config.STAC_REQUEST_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             # 1. Discover earliest post-storm scene (try optical if not forced SAR)
             optical_post = []
-            if self.req.prefer_sensor in ("auto", "optical"):
+            if self.req.prefer_sensor in ("auto", "optical", "landsat"):
+                optical_query = (
+                    ["landsat-c2-l2"]
+                    if self.req.prefer_sensor == "landsat"
+                    else optical_collections
+                )
                 optical_post = await self._query_stac(
                     session=session,
-                    collections=optical_collection,
+                    collections=optical_query,
                     start_date=post_storm_start,
                     end_date=post_storm_end,
                     cloud_cover_limit=25.0,
@@ -349,7 +355,7 @@ class StormDamageService:
                 )
 
             # 2. Query pre-storm baseline for change detection
-            pre_collection = sar_collection if sensor_type == "sar" else optical_collection
+            pre_collection = sar_collection if sensor_type == "sar" else [selected_post_item.get("collection", "sentinel-2-l2a")]
             pre_items = await self._query_stac(
                 session=session,
                 collections=pre_collection,
@@ -391,16 +397,23 @@ class StormDamageService:
             post_assets = selected_post_item.get("assets", {})
             pre_assets = pre_item.get("assets", {})
 
-            post_raw_url = (
-                post_assets.get("vv", {}).get("href")
-                or post_assets.get("visual", {}).get("href")
-                or post_assets.get("rendered_preview", {}).get("href")
-            )
-            pre_raw_url = (
-                pre_assets.get("vv", {}).get("href")
-                or pre_assets.get("visual", {}).get("href")
-                or pre_assets.get("rendered_preview", {}).get("href")
-            )
+            def select_asset(assets: dict[str, Any], collection: str) -> str | None:
+                if collection.startswith("landsat"):
+                    # Landsat C2 L2 red reflectance is broadly available and
+                    # provides a consistent full-bbox optical intensity signal.
+                    return (
+                        assets.get("red", {}).get("href")
+                        or assets.get("nir08", {}).get("href")
+                        or assets.get("visual", {}).get("href")
+                    )
+                return (
+                    assets.get("vv", {}).get("href")
+                    or assets.get("visual", {}).get("href")
+                    or assets.get("rendered_preview", {}).get("href")
+                )
+
+            post_raw_url = select_asset(post_assets, selected_post_item.get("collection", ""))
+            pre_raw_url = select_asset(pre_assets, pre_item.get("collection", ""))
 
             if not post_raw_url or not pre_raw_url:
                 raise ValueError("Required spectral/radar bands are missing from STAC assets.")

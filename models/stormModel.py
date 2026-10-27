@@ -9,9 +9,9 @@ class StormDamageRequest(BaseModel):
     storm_start_date: date = Field(..., description="Storm start date")
     storm_end_date: date = Field(..., description="Storm conclusion date")
     buffer_km: float = Field(default=10.0, ge=1.0, le=50.0, description="Analysis buffer radius in km")
-    prefer_sensor: Literal["auto", "sar", "optical"] = Field(
+    prefer_sensor: Literal["auto", "sar", "optical", "landsat"] = Field(
         default="auto",
-        description="'auto' selects earliest clear scene, preferring SAR during cloudy post-storm periods",
+        description="'auto' selects the earliest clear Sentinel-2/Landsat scene, with Sentinel-1 fallback",
     )
     incident_name: str | None = None
     model_config = ConfigDict(extra="forbid")

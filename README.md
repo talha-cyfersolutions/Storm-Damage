@@ -1,6 +1,6 @@
 # Storm Damage Imagery API
 
-A high-performance, production-ready geospatial FastAPI service for rapid post-storm damage detection using Sentinel-1 SAR change detection and optical imagery, returning analytical statistics and 4-band Cloud-Optimized GeoTIFFs (COGs).
+A high-performance, production-ready geospatial FastAPI service for rapid post-storm damage detection using Sentinel-1 SAR, Sentinel-2, and Landsat optical imagery, returning analytical statistics and 4-band Cloud-Optimized GeoTIFFs (COGs).
 
 ---
 
@@ -72,12 +72,23 @@ Key environment variables:
 | `AWS_S3_BUCKET` | `burnscar` | S3 bucket name when backend is `s3` |
 | `RATE_LIMIT_ENABLED` | `true` | Sliding window rate limiting toggle |
 | `FRONTEND_URLS` | `http://localhost:3000...` | Comma-separated list of allowed CORS origins |
-| `MAPBOX_ACCESS_TOKEN` | `None` | Optional public Mapbox token served to the browser viewer |
+| `MAPBOX_ACCESS_TOKEN` | `None` | Optional public Mapbox token served to the browser viewer; enables Dark and Satellite base styles |
 
 The viewer is scoped to the National Capital Region: District of Columbia, Virginia,
 and Maryland. NCEI sync jobs download the selected years but persist only damaging
 events in those three jurisdictions. Historical queries from the viewer include
 `region=mid_atlantic`; API consumers can use the same filter explicitly.
+
+Satellite scene selection is limited to two days before/after the requested storm
+dates. `auto` checks Sentinel-2 and Landsat Collection 2 Level-2 optical scenes,
+then falls back to Sentinel-1 SAR when optical imagery is unavailable or cannot be
+read. The generated COG contains the complete requested analysis bounding box; it
+does not download an entire satellite swath.
+
+The viewer provides a **Dark** and **Satellite** base-map switcher. Without a
+Mapbox token it uses CARTO Dark and Esri World Imagery raster tiles as a local
+fallback; with `MAPBOX_ACCESS_TOKEN` it uses Mapbox's `dark-v11` and
+`satellite-streets-v12` styles.
 
 ---
 
