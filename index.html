@@ -385,6 +385,7 @@
     }
 
     function createMap(container, center, zoom, navigation = false) {
+      if (!document.getElementById(container)) return null;
       const instance = new mapboxgl.Map({
         container,
         style: mapboxgl.accessToken
@@ -404,7 +405,10 @@
       } catch (error) { console.warn("Viewer configuration unavailable; using open basemap.", error); }
       mapboxgl.accessToken = token;
       map = createMap("map", defaultCenter, defaultZoom, true);
-      regionViews.forEach((view) => overviewMaps.push(createMap(view.id, view.center, view.zoom)));
+      regionViews.forEach((view) => {
+        const regionalMap = createMap(view.id, view.center, view.zoom);
+        if (regionalMap) overviewMaps.push(regionalMap);
+      });
     }
 
     function restoreAnalysisOverlays() {

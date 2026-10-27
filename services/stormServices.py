@@ -354,16 +354,33 @@ class StormDamageService:
                     f"No post-storm satellite scenes found in the target area between {post_storm_start} and {post_storm_end}."
                 )
 
-            # 2. Query pre-storm baseline for change detection
-            pre_collection = sar_collection if sensor_type == "sar" else [selected_post_item.get("collection", "sentinel-2-l2a")]
+            # 2. Query a baseline within two days before the requested start.
+            # Optical baselines may come from either Sentinel-2 or Landsat;
+            # this avoids failing just because one provider has a revisit gap.
+            if sensor_type == "sar":
+                pre_collection = sar_collection
+            elif self.req.prefer_sensor == "landsat":
+                pre_collection = ["landsat-c2-l2"]
+            else:
+                pre_collection = optical_collections
             pre_items = await self._query_stac(
                 session=session,
                 collections=pre_collection,
                 start_date=pre_storm_start,
                 end_date=pre_storm_end,
-                cloud_cover_limit=20.0 if sensor_type == "optical" else None,
+                cloud_cover_limit=30.0 if sensor_type == "optical" else None,
                 sort_ascending=False,
             )
+            if not pre_items and sensor_type == "optical":
+                logger.info("No clear optical baseline; retrying the same two-day window with relaxed cloud filtering.")
+                pre_items = await self._query_stac(
+                    session=session,
+                    collections=pre_collection,
+                    start_date=pre_storm_start,
+                    end_date=pre_storm_end,
+                    cloud_cover_limit=None,
+                    sort_ascending=False,
+                )
 
             # Fallback to SAR if optical baseline is obscured by clouds
             if not pre_items and sensor_type == "optical" and self.req.prefer_sensor == "auto":
@@ -389,7 +406,11 @@ class StormDamageService:
                     )
 
             if not pre_items:
-                raise ValueError("No matching pre-storm baseline scenes found for change detection.")
+                raise ValueError(
+                    "No pre-storm baseline scene was found within the allowed two-day window "
+                    f"({pre_storm_start} through {pre_storm_end}). "
+                    "Try a nearby storm date, a smaller area, or Sentinel-1 SAR."
+                )
 
             pre_item = pre_items[0]
 
