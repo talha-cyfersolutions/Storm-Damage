@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     PLANETARY_COMPUTER_STAC: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     PLANETARY_COMPUTER_API_KEY: str | None = None
     MAX_CLOUD_COVER: float = 15.0
+    PRE_SCENE_SEARCH_WINDOW_DAYS: int = 365
+    POST_SCENE_MAX_DAYS: int = 3
     STAC_REQUEST_TIMEOUT_SECONDS: int = 30
     GDAL_HTTP_TIMEOUT: int = 30
     NASA_FIRMS_MAP_KEY: str | None = None

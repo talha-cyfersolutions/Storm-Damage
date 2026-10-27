@@ -79,11 +79,12 @@ and Maryland. NCEI sync jobs download the selected years but persist only damagi
 events in those three jurisdictions. Historical queries from the viewer include
 `region=mid_atlantic`; API consumers can use the same filter explicitly.
 
-Satellite scene selection is limited to three days before/after the requested storm
-dates. `auto` checks Sentinel-2 and Landsat Collection 2 Level-2 optical scenes,
-then falls back to Sentinel-1 SAR when optical imagery is unavailable or cannot be
-read. The generated COG contains the complete requested analysis bounding box; it
-does not download an entire satellite swath.
+Post-storm scene selection searches only up to three days after the requested storm
+date and chooses the nearest available scene across Sentinel-1, Sentinel-2, and
+Landsat Collection 2 Level-2. Pre-storm baseline discovery uses a broad window
+controlled by `PRE_SCENE_SEARCH_WINDOW_DAYS` (365 days by default). The generated
+COG contains the complete requested analysis bounding box; it does not download an
+entire satellite swath.
 
 The viewer provides a **Dark** and **Satellite** base-map switcher. Without a
 Mapbox token it uses CARTO Dark and Esri World Imagery raster tiles as a local

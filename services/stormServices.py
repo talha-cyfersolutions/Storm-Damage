@@ -328,12 +328,13 @@ class StormDamageService:
 
     async def execute_analysis(self) -> ComputedStormDamageResponse:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        # Keep both scene searches within three days of the requested storm dates.
-        pre_storm_start = (self.req.storm_start_date - timedelta(days=3)).isoformat()
+        pre_window_days = Config.PRE_SCENE_SEARCH_WINDOW_DAYS
+        post_window_days = min(Config.POST_SCENE_MAX_DAYS, 3)
+        pre_storm_start = (self.req.storm_start_date - timedelta(days=pre_window_days)).isoformat()
         pre_storm_end = (self.req.storm_start_date - timedelta(days=1)).isoformat()
         post_storm_start = self.req.storm_end_date.isoformat()
         post_storm_end = min(
-            (self.req.storm_end_date + timedelta(days=3)).isoformat(),
+            (self.req.storm_end_date + timedelta(days=post_window_days)).isoformat(),
             today_str,
         )
 
@@ -342,7 +343,7 @@ class StormDamageService:
 
         timeout = aiohttp.ClientTimeout(total=Config.STAC_REQUEST_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # 1. Discover earliest post-storm scene (try optical if not forced SAR)
+            # 1. Discover the nearest post-storm scene. Query each source independently.
             optical_post = []
             if self.req.prefer_sensor in ("auto", "optical", "landsat"):
                 optical_query = (
@@ -359,11 +360,9 @@ class StormDamageService:
                     sort_ascending=True,
                 )
 
-            selected_post_item = None
-            sensor_type = "optical"
-
-            if not optical_post or self.req.prefer_sensor == "sar":
-                sar_post = await self._query_stac(
+            sar_post = []
+            if self.req.prefer_sensor in ("auto", "sar"):
+                sar_post = await self._query_stac_collections(
                     session=session,
                     collections=sar_collection,
                     start_date=post_storm_start,
@@ -371,18 +370,22 @@ class StormDamageService:
                     cloud_cover_limit=None,
                     sort_ascending=True,
                 )
-                if sar_post:
-                    selected_post_item = sar_post[0]
-                    sensor_type = "sar"
-            else:
-                selected_post_item = optical_post[0]
+
+            post_candidates = [(item, "optical") for item in optical_post]
+            post_candidates.extend((item, "sar") for item in sar_post)
+            post_candidates.sort(
+                key=lambda pair: pair[0].get("properties", {}).get("datetime", "")
+            )
+            selected_post_item = post_candidates[0][0] if post_candidates else None
+            sensor_type = post_candidates[0][1] if post_candidates else "optical"
 
             if not selected_post_item:
                 raise ValueError(
-                    f"No post-storm satellite scenes found in the target area between {post_storm_start} and {post_storm_end}."
+                    f"No post-storm satellite scenes found in the target area between "
+                    f"{post_storm_start} and {post_storm_end} across Sentinel-1, Sentinel-2, and Landsat."
                 )
 
-            # 2. Query a baseline within three days before the requested start.
+            # 2. Query a broad compatible baseline before the requested start.
             # Optical baselines may come from either Sentinel-2 or Landsat;
             # this avoids failing just because one provider has a revisit gap.
             if sensor_type == "sar":
@@ -400,7 +403,7 @@ class StormDamageService:
                 sort_ascending=False,
             )
             if not pre_items and sensor_type == "optical":
-                logger.info("No clear optical baseline; retrying the same three-day window with relaxed cloud filtering.")
+                logger.info("No clear optical baseline; retrying the same configured window with relaxed cloud filtering.")
                 pre_items = await self._query_stac_collections(
                     session=session,
                     collections=pre_collection,
@@ -435,7 +438,8 @@ class StormDamageService:
 
             if not pre_items:
                 raise ValueError(
-                    "No pre-storm baseline scene was found within the allowed three-day window "
+                    "No pre-storm baseline scene was found within the allowed "
+                    f"{pre_window_days}-day window "
                     f"({pre_storm_start} through {pre_storm_end}) for "
                     f"latitude {self.req.latitude:.4f}, longitude {self.req.longitude:.4f}. "
                     "Try Auto/Sentinel-2, Landsat, a smaller area, or a nearby date."
