@@ -91,6 +91,34 @@ class StormDamageService:
             logger.error("STAC query network error on %s: %s", self.stac_base, exc)
             return []
 
+    async def _query_stac_collections(
+        self,
+        session: aiohttp.ClientSession,
+        collections: list[str],
+        start_date: str,
+        end_date: str,
+        cloud_cover_limit: float | None = None,
+        sort_ascending: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Query collections independently so one unavailable collection cannot hide others."""
+        results: list[dict[str, Any]] = []
+        for collection in collections:
+            results.extend(
+                await self._query_stac(
+                    session=session,
+                    collections=[collection],
+                    start_date=start_date,
+                    end_date=end_date,
+                    cloud_cover_limit=cloud_cover_limit,
+                    sort_ascending=sort_ascending,
+                )
+            )
+        results.sort(
+            key=lambda item: item.get("properties", {}).get("datetime", ""),
+            reverse=not sort_ascending,
+        )
+        return results[:10]
+
     @staticmethod
     async def _sign_href_if_needed(session: aiohttp.ClientSession, href: str) -> str:
         """Signs Planetary Computer Azure Blob Storage hrefs with a SAS token if applicable."""
@@ -322,7 +350,7 @@ class StormDamageService:
                     if self.req.prefer_sensor == "landsat"
                     else optical_collections
                 )
-                optical_post = await self._query_stac(
+                optical_post = await self._query_stac_collections(
                     session=session,
                     collections=optical_query,
                     start_date=post_storm_start,
@@ -363,7 +391,7 @@ class StormDamageService:
                 pre_collection = ["landsat-c2-l2"]
             else:
                 pre_collection = optical_collections
-            pre_items = await self._query_stac(
+            pre_items = await self._query_stac_collections(
                 session=session,
                 collections=pre_collection,
                 start_date=pre_storm_start,
@@ -373,7 +401,7 @@ class StormDamageService:
             )
             if not pre_items and sensor_type == "optical":
                 logger.info("No clear optical baseline; retrying the same three-day window with relaxed cloud filtering.")
-                pre_items = await self._query_stac(
+                pre_items = await self._query_stac_collections(
                     session=session,
                     collections=pre_collection,
                     start_date=pre_storm_start,
@@ -408,8 +436,9 @@ class StormDamageService:
             if not pre_items:
                 raise ValueError(
                     "No pre-storm baseline scene was found within the allowed three-day window "
-                    f"({pre_storm_start} through {pre_storm_end}). "
-                    "Try a nearby storm date, a smaller area, or Sentinel-1 SAR."
+                    f"({pre_storm_start} through {pre_storm_end}) for "
+                    f"latitude {self.req.latitude:.4f}, longitude {self.req.longitude:.4f}. "
+                    "Try Auto/Sentinel-2, Landsat, a smaller area, or a nearby date."
                 )
 
             pre_item = pre_items[0]
